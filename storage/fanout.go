@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"container/heap"
 	"context"
+	"fmt"
 	"sort"
 	"strings"
 	"sync"
@@ -758,7 +759,6 @@ func (c *compactChunkIterator) At() chunks.Meta {
 	if len(c.h) == 0 {
 		panic("compactChunkIterator.At() called after .Next() returned false.")
 	}
-
 	return c.h[0].At()
 }
 
@@ -791,6 +791,8 @@ func (c *compactChunkIterator) Next() bool {
 
 		// Get the current oldest chunk by min, then max time.
 		next := c.At()
+
+		fmt.Println("oldest chunk", next)
 		if next.MinTime > last.MaxTime {
 			// No overlap with last one.
 			break
@@ -812,8 +814,13 @@ func (c *compactChunkIterator) Next() bool {
 		return len(c.h) > 0
 	}
 
-	// Add last, not yet included overlap. We operate on same series, so labels does not matter here.
-	var chkSeries ChunkSeries = &seriesToChunkEncoder{Series: c.mergeFunc(append(overlapped, newChunkToSeriesDecoder(nil, c.At()))...)}
+	if len(c.h) > 0 {
+		// Add last, not yet included overlap if exists. We operate on same series, so labels does not matter here.
+		overlapped = append(overlapped, newChunkToSeriesDecoder(nil, c.At()))
+	}
+
+	fmt.Println(overlapped)
+	var chkSeries ChunkSeries = &seriesToChunkEncoder{Series: c.mergeFunc(overlapped...)}
 	heap.Push(&c.h, chkSeries)
 	return true
 }

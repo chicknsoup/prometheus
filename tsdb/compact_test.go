@@ -548,6 +548,46 @@ func TestCompaction_populateBlock(t *testing.T) {
 			},
 		},
 		{
+			title: "Populate from two blocks; chunks with negative time.",
+			inputSeriesSamples: [][]seriesSamples{
+				{
+					{
+						lset:   map[string]string{"a": "b"},
+						chunks: [][]sample{{{t: 0}, {t: 10}}, {{t: 11}, {t: 20}}},
+					},
+					{
+						lset:   map[string]string{"a": "c"},
+						chunks: [][]sample{{{t: -11}, {t: -9}}, {{t: 10}, {t: 19}}},
+					},
+					{
+						// no-chunk series should be dropped.
+						lset: map[string]string{"a": "empty"},
+					},
+				},
+				{
+					{
+						lset:   map[string]string{"a": "b"},
+						chunks: [][]sample{{{t: 21}, {t: 30}}},
+					},
+					{
+						lset:   map[string]string{"a": "c"},
+						chunks: [][]sample{{{t: 40}, {t: 45}}},
+					},
+				},
+			},
+			compactMinTime: -11,
+			expSeriesSamples: []seriesSamples{
+				{
+					lset:   map[string]string{"a": "b"},
+					chunks: [][]sample{{{t: 0}, {t: 10}}, {{t: 11}, {t: 20}}, {{t: 21}, {t: 30}}},
+				},
+				{
+					lset:   map[string]string{"a": "c"},
+					chunks: [][]sample{{{t: -11}, {t: -9}}, {{t: 10}, {t: 19}}, {{t: 40}, {t: 45}}},
+				},
+			},
+		},
+		{
 			title: "Populate from two blocks showing that order is maintained.",
 			inputSeriesSamples: [][]seriesSamples{
 				{
@@ -638,7 +678,44 @@ func TestCompaction_populateBlock(t *testing.T) {
 			},
 		},
 		{
+			title: "Populate from two blocks 1:1 duplicated chunks; with negative timestamps.",
+			inputSeriesSamples: [][]seriesSamples{
+				{
+					{
+						lset:   map[string]string{"a": "1"},
+						chunks: [][]sample{{{t: 1}, {t: 2}}, {{t: 3}, {t: 4}}},
+					},
+					{
+						lset:   map[string]string{"a": "2"},
+						chunks: [][]sample{{{t: -3}, {t: -2}}, {{t: 1}, {t: 3}, {t: 4}}, {{t: 5}, {t: 6}}},
+					},
+				},
+				{
+					{
+						lset:   map[string]string{"a": "1"},
+						chunks: [][]sample{{{t: 3}, {t: 4}}},
+					},
+					{
+						lset:   map[string]string{"a": "2"},
+						chunks: [][]sample{{{t: 1}, {t: 3}, {t: 4}}, {{t: 7}, {t: 8}}},
+					},
+				},
+			},
+			compactMinTime: -3,
+			expSeriesSamples: []seriesSamples{
+				{
+					lset:   map[string]string{"a": "1"},
+					chunks: [][]sample{{{t: 1}, {t: 2}}, {{t: 3}, {t: 4}}},
+				},
+				{
+					lset:   map[string]string{"a": "2"},
+					chunks: [][]sample{{{t: -3}, {t: -2}}, {{t: 1}, {t: 3}, {t: 4}}, {{t: 5}, {t: 6}}, {{t: 7}, {t: 8}}},
+				},
+			},
+		},
+		{
 			// This should not happened because head block is making sure the chunks are not crossing block boundaries.
+			// We used to return error, but now chunk is trimmed.
 			title: "Populate from single block containing chunk outside of compact meta time range.",
 			inputSeriesSamples: [][]seriesSamples{
 				{
@@ -650,10 +727,15 @@ func TestCompaction_populateBlock(t *testing.T) {
 			},
 			compactMinTime: 0,
 			compactMaxTime: 20,
-			expErr:         errors.New("found chunk with minTime: 10 maxTime: 30 outside of compacted minTime: 0 maxTime: 20"),
+			expSeriesSamples: []seriesSamples{
+				{
+					lset:   map[string]string{"a": "b"},
+					chunks: [][]sample{{{t: 1}, {t: 2}}, {{t: 10}}},
+				},
+			},
 		},
 		{
-			// Introduced by https://github.com/prometheus/tsdb/issues/347.
+			// Introduced by https://github.com/prometheus/tsdb/issues/347. We used to return error, but now chunk is trimmed.
 			title: "Populate from single block containing extra chunk",
 			inputSeriesSamples: [][]seriesSamples{
 				{
@@ -665,7 +747,12 @@ func TestCompaction_populateBlock(t *testing.T) {
 			},
 			compactMinTime: 0,
 			compactMaxTime: 10,
-			expErr:         errors.New("found chunk with minTime: 10 maxTime: 20 outside of compacted minTime: 0 maxTime: 10"),
+			expSeriesSamples: []seriesSamples{
+				{
+					lset:   map[string]string{"a": "issue347"},
+					chunks: [][]sample{{{t: 1}, {t: 2}}},
+				},
+			},
 		},
 		{
 			// Deduplication expected.
@@ -741,7 +828,7 @@ func TestCompaction_populateBlock(t *testing.T) {
 	}
 
 	for _, tc := range populateBlocksCases {
-		if ok := t.Run(tc.title, func(t *testing.T) {
+		t.Run(tc.title, func(t *testing.T) {
 			blocks := make([]BlockReader, 0, len(tc.inputSeriesSamples))
 			for _, b := range tc.inputSeriesSamples {
 				ir, cr, mint, maxt := createIdxChkReaders(t, b)
@@ -767,7 +854,6 @@ func TestCompaction_populateBlock(t *testing.T) {
 				return
 			}
 			testutil.Ok(t, err)
-
 			testutil.Equals(t, tc.expSeriesSamples, iw.series)
 
 			// Check if stats are calculated properly.
@@ -781,9 +867,7 @@ func TestCompaction_populateBlock(t *testing.T) {
 				}
 			}
 			testutil.Equals(t, s, meta.Stats)
-		}); !ok {
-			return
-		}
+		})
 	}
 }
 
